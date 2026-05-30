@@ -1,0 +1,34 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments and local env files
+.venv/
+venv/
+env/
+ENV/
+.env
+.env.*
+
+# Amazon Bulk input/output files
+*.xlsx
+*.xlsm
+*.csv
+
+# Local output and logs
+output/
+logs/
+data/
+debug/
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+~$*
+.DS_Store
+Thumbs.db
