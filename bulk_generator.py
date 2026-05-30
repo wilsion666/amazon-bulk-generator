@@ -189,12 +189,12 @@ def run_generation(*, bulk_template: BinaryIO | bytes | None, requirement_text: 
         else:
             reasons = _joined_unique(skipped["skip_reason"].tolist())
             validation_rows.append(_validation_row("Bulk 输出", "error", f"未生成 bulk_upload.xlsx：{reasons}"))
-    elif failure_reasons:
-        validation_rows.append(_validation_row("Bulk 输出", "error", f"未生成 bulk_upload.xlsx：{'; '.join(failure_reasons)}"))
     elif template is None:
         validation_rows.append(_validation_row("Bulk 输出", "error", "未生成 bulk_upload.xlsx：缺少可用 Bulk 模板"))
     else:
         bulk_upload = build_bulk_upload(template, executable)
+        if failure_reasons:
+            validation_rows.append(_validation_row("Bulk 输出", "warning", f"部分操作块未生成：{'; '.join(failure_reasons)}"))
         validation_rows.append(_validation_row("Bulk 输出", "ok", f"已生成 {len(executable)} 行 Bulk 上传数据"))
 
     validation = pd.DataFrame(validation_rows, columns=VALIDATION_COLUMNS)
@@ -217,6 +217,7 @@ def run_generation(*, bulk_template: BinaryIO | bytes | None, requirement_text: 
             "total_blocks": block_counts["total"],
             "success_blocks": block_counts["success"],
             "partial_blocks": block_counts["partial"],
+            "partial_success": block_counts["partial"],
             "failed_blocks": block_counts["failed"],
             "generated_rows": len(executable),
         },
@@ -540,14 +541,58 @@ def validate_actions(
         executable = [action for action in executable if str(action.get("block_id", "")) not in fatal_block_ids]
 
     executable_df = _clean_actions(pd.DataFrame(executable))
-    skipped_df = _clean_skipped(pd.DataFrame(_dedupe_skipped(skipped)))
     if template is not None and not executable_df.empty:
-        validation.extend(_required_column_validation(template, executable_df))
-        validation.extend(_bulk_id_validation(template, executable_df))
-        validation.extend(_generated_bulk_value_validation(template, executable_df))
-    if skipped_df.empty and not _has_errors(validation):
+        executable_df, validation_skipped, block_validation = _validate_executable_blocks(template, executable_df)
+        skipped.extend(validation_skipped)
+        validation.extend(block_validation)
+    skipped_df = _clean_skipped(pd.DataFrame(_dedupe_skipped(skipped)))
+    if skipped_df.empty and not executable_df.empty and not _has_errors(validation):
         validation.append(_validation_row("动作校验", "ok", "全部动作校验通过"))
     return executable_df, skipped_df, validation
+
+
+def _validate_executable_blocks(
+    template: BulkTemplate,
+    executable: pd.DataFrame,
+) -> tuple[pd.DataFrame, list[dict[str, object]], list[dict[str, object]]]:
+    valid_blocks: list[pd.DataFrame] = []
+    skipped: list[dict[str, object]] = []
+    validation: list[dict[str, object]] = []
+
+    for block_id, block_actions in _block_groups(executable):
+        block_validation: list[dict[str, object]] = []
+        block_validation.extend(_scope_block_validation_rows(block_actions, _required_column_validation(template, block_actions), block_id))
+        block_validation.extend(_scope_block_validation_rows(block_actions, _bulk_id_validation(template, block_actions), block_id))
+        block_validation.extend(_scope_block_validation_rows(block_actions, _generated_bulk_value_validation(template, block_actions), block_id))
+        block_errors = _failure_reasons(block_validation)
+        validation.extend(block_validation)
+        if block_errors:
+            reason = "；".join(block_errors)
+            skipped.extend({**action, "skip_reason": reason} for action in block_actions.to_dict("records"))
+        else:
+            valid_blocks.append(block_actions)
+
+    if valid_blocks:
+        return _clean_actions(pd.concat(valid_blocks, ignore_index=True)), skipped, validation
+    return _empty_actions(), skipped, validation
+
+
+def _scope_block_validation_rows(
+    block_actions: pd.DataFrame,
+    rows: list[dict[str, object]],
+    block_id: str,
+) -> list[dict[str, object]]:
+    block_index = _first_value(block_actions, "block_index") or block_id
+    scoped = []
+    for row in rows:
+        scoped_row = dict(row)
+        detail = str(scoped_row.get("detail", ""))
+        if scoped_row.get("status") == "error" and not detail.startswith("操作"):
+            scoped_row["detail"] = f"操作{block_index}失败：{detail}"
+        if not str(scoped_row.get("action_id", "")).strip():
+            scoped_row["action_id"] = block_id
+        scoped.append(scoped_row)
+    return scoped
 
 
 def build_bulk_upload(template: BulkTemplate, actions: pd.DataFrame) -> bytes:
