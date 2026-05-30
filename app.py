@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import streamlit as st
-import streamlit.components.v1 as components
 
 from bulk_generator import run_generation
 
@@ -140,7 +139,7 @@ def _inject_editor_style_and_shortcuts() -> None:
         """,
         unsafe_allow_html=True,
     )
-    components.html(
+    st.html(
         """
         <script>
         const install = () => {
@@ -169,7 +168,7 @@ def _inject_editor_style_and_shortcuts() -> None:
         setTimeout(install, 250);
         </script>
         """,
-        height=0,
+        unsafe_allow_javascript=True,
     )
 
 
